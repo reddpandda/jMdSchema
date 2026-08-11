@@ -2,7 +2,7 @@
 
 Schema-driven Markdown structure validation and template generation.
 
-A **shape** defines how a specific section type is written (a Glossary, a Prerequisites block, a Changelog entry). A **template** defines how a whole file type is written, composed of shapes. A document is checked against its template, and can be rebuilt against it if it doesn't match. Bespoke, one-off sections aren't a special category — they're just a shape used once.
+A **template** defines how a specific file type is written — headings, required/optional sections, counts, content rules. A document is checked against its template, and can be rebuilt against it if it doesn't match. Bespoke, one-off sections aren't a special category — they're just a section with an "allow additional content" flag, not a separate mechanism. Recurring section conventions (a Glossary, a Changelog entry) are documented informally, not modeled as a distinct concept the engine matches against.
 
 JavaScript, browser-based. An independent implementation, informed by studying [mdschema](https://github.com/jackchuka/mdschema) (an existing Go tool solving a closely related problem for Markdown) — not a fork or a port.
 
