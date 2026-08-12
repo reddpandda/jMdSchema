@@ -148,7 +148,7 @@ jMdSchema/ (this repo — general, authoritative, no project-specific content, n
 
 ## Builder pipeline
 
-The builder writes its output to `bundles/`. A separate, manually-triggered **pusher** (working name: jShip, a separate repo) moves reviewed content from `bundles/` to `main` — this human-in-the-loop step is why structural failures are soft failures: mangled output is staged for review, never published automatically. (See Post-build behavior below for exactly what the Action does and doesn't do with branches.)
+The builder writes its output to `bundles/`. A separate, manually-triggered **pusher** action moves reviewed content from `bundles/` to `main` — this human-in-the-loop step is why structural failures are soft failures: mangled output is staged for review, never published automatically. (See Post-build behavior below for exactly what the Action does and doesn't do with branches.)
 
 Per source document, resolution and validation run as sequential plugins within one unified pipeline invocation — not two separate passes over the document — in this order:
 
@@ -157,27 +157,14 @@ Per source document, resolution and validation run as sequential plugins within 
    - If any directive fails to resolve: **hard document-level failure** — the document is still generated at its expected output path, but its content is replaced entirely with `This is a placeholder, see builder.output.md`. Never skipped, never left silently broken-but-plausible.
    - The specific broken reference is logged to `builder.output.md`.
    - The structural-validation plugin does not run against a document whose resolution plugin failed — the pipeline short-circuits before reaching it.
-2. **Structural-validation and internal-link-validation plugins run next in the same chain**, against the now-resolved AST — `remark-validate-links` checks internal anchors and relative file references alongside our own structural rules, in the same pass.
-   - If either fails — a **soft failure** ("mangled," not "wrong") — the real, best-effort resolved content is still written to `bundles/` as-is, since it's staged for human review before the pusher ever runs, not published live.
-   - The specific violations, structural or link-related, are logged to `builder.output.md` together.
+2. **Structural-validation plugin runs next in the same chain**, against the now-resolved AST.
+   - If it fails — a **soft, structural failure** ("mangled," not "wrong") — the real, best-effort resolved content is still written to `bundles/` as-is, since it's staged for human review before the pusher ever runs, not published live.
+   - The specific violations are logged to `builder.output.md`.
 3. **If both succeed**, clean output, nothing to log.
 
 **The wrong/mangled distinction:**
 - **Wrong** (a directive reference that doesn't resolve — factually broken) → hard failure → placeholder stub
-- **Mangled** (structurally doesn't match its template, or contains a broken internal link/anchor — nothing factually broken about the manifest itself) → soft failure → best-effort real output, flagged for review
-
-### External link validation (lychee) — deliberately not part of this pipeline
-
-`lychee` is a standalone compiled tool, not a JS/remark plugin — it cannot run inside the same AST pipeline as everything else, unlike `remark-validate-links`. Rather than shell out to it from within jMdSchema's own Action (real added complexity, and a second failure surface for something [lychee's own official Action](https://github.com/lycheeverse/lychee-action) already does well), external link checking is **not invoked by jMdSchema's Action at all**. It's documented here as a recommended, separate step for a consuming repo's own workflow to add alongside jMdSchema's Action, with its own independent pass/fail reporting via `lychee-action`'s own GitHub annotations. jMdSchema's `builder.output.md` and exit code don't account for lychee's results — it's a genuinely separate check, not a gap in this one.
-
-### Optional: forwarding jShip's provenance warnings — checked-if-present only
-
-jShip (the pusher) runs a provenance check on every push — confirming a live file on `main` hasn't been edited outside jShip's own process since its last legitimate push. When that check finds a mismatch, jShip doesn't block the push (see jShip's own scope doc for why) — it pushes through anyway and logs a `CHANGED-ON-MAIN:` line in its own `pusher.output.md`, which it writes back to the docs branch specifically so the builder can find it.
-
-- On each run, the builder checks whether `pusher.output.md` exists on the docs branch.
-- **If it doesn't exist: skip entirely, no error.** This must never be a requirement — most builder runs will have nothing to check.
-- **If it exists**, parse it for `CHANGED-ON-MAIN:` lines. For each one found, surface it as a new `SOFT FAIL` in `builder.output.md` for that document, so the warning flows into the same human-review checkpoint the builder already uses rather than getting lost in a separate report nobody reliably checks.
-- **Dependency direction is one-way-required, one-way-optional, not circular**: jShip requires a clean `builder.output.md` to run at all (its own step 0). The builder's check of jShip's output is conditional-only, never required — a first-ever build with nothing pushed yet works exactly the same as any other.
+- **Mangled** (structurally doesn't match its template, nothing factually broken) → soft failure → best-effort real output, flagged for review
 
 ## `builder.output.md`
 
@@ -233,11 +220,9 @@ jShip (the pusher) runs a provenance check on every push — confirming a live f
 - **A single plain-data template shape** (a TypeScript interface), authorable as YAML or as a TS object literal — no translation layer between them
 - **A general-purpose template library**, split into `documents/` (full structural validation), `schemas/` (what the engine validates config-type files against), and `examples/` (annotated starting points) — not tied to any one consuming project
 - **Manifest-based reference resolution**, split into directives (manifest-key lookup) and metadata tokens (current-document only), implemented via `remark-directive` as an AST-pipeline plugin, not a separate text pass
-- **Internal link/anchor validation**, via `remark-validate-links` integrated into the same AST pipeline as structural validation — contributes to the soft-failure/mangled category, same handling as structural violations
 - **Manifest schema and existence validation, and indefinite multi-version support** — not semantic staleness, which stays manual/Claude-assisted
 - **Universal header/footer partials**
 - **The builder pipeline and `builder.output.md`**
-- **Optional forwarding of jShip's `pusher.output.md` provenance warnings into `builder.output.md`** — checked-if-present only, never a requirement
 - **Distribution as a GitHub Action**, including defined post-build behavior and exit-code semantics
 - **CREDITS.md**, maintained as a real, current attribution record
 - **MIGRATION.md**, one guide per `manifest_version` bump, for consumers who opt in to new features
@@ -248,15 +233,14 @@ jShip (the pusher) runs a provenance check on every push — confirming a live f
 - **Depending on mdschema or mdshape live** — both are studied, adapted, and rewritten, never installed as runtime dependencies
 - **A separate YAML-to-engine translation/"sugar" layer** — YAML and TS object literals both directly express the same native template data; nothing to translate
 - **Dynamic expression-based heading matching** — no evidence of need; revisit only if a specific case demands it
-- **Hand-rolling link validation logic** — internal link/anchor checking is orchestrated via `remark-validate-links` within the builder's own pipeline (see Builder pipeline); external link checking is not invoked by jMdSchema's Action at all, and is instead documented as the consuming repo's own separate workflow step — neither reimplements checks that existing, purpose-built tools already do well
+- **Link validation logic** — handled by existing tools (see Dependencies)
 - **A general cross-template reusable-section engine** — templates remain self-contained; the manifest/directive system covers the one proven case (universal partials)
 - **Automated semantic staleness detection on the manifest** — deliberately manual/Claude-assisted, not a pipeline check
 - **Automatic manifest migration** — each version bump ships a one-time script consumers run themselves; the builder never migrates silently
 - **Dropping support for older `manifest_version` values** — every version stays supported indefinitely; a new version is a feature addition, never a deprecation
 - **Auto-commit/auto-push from the Action** — the Action only writes to the runner's filesystem; committing and pushing are the consuming repo's own workflow steps
 - **Rendering/output tooling** (HTML, math, diagrams)
-- **The pusher** (bundles/ → main branch) — a separate, simpler mechanism, not designed here (see jShip's own scope document)
-- **Requiring `pusher.output.md` to exist** — the builder's check of it is always optional, never a hard dependency
+- **The pusher** (bundles/ → main branch) — a separate, simpler mechanism, not designed here
 - **Project-specific content of any kind** — no consuming repo's actual `manifest.yml`, `content/`, or `partials/` lives in this repo
 
 ## Kept in spirit (idea only, not code)
@@ -275,8 +259,8 @@ jShip (the pusher) runs a provenance check on every push — confirming a live f
 | `remark-directive` | Parses `:directive[X]` / `::directive[X]` syntax into AST nodes — the mechanism the manifest/metadata resolution plugin operates on |
 | `remark-frontmatter`, `remark-gfm` | Frontmatter and table/GFM support — handled inside the same AST pipeline as everything else, not a separate parsing pass |
 | `js-yaml` | YAML parsing, for the manifest, manifest schema, and plain-YAML templates |
-| `remark-validate-links` | Internal anchor/file link validation — runs inside the same AST pipeline as structural validation, contributing to the soft-failure/mangled category |
-| `lychee` | External URL validation — **not invoked by jMdSchema's own Action**; run via lychee's own official `lychee-action` as a separate, recommended step in the consuming repo's workflow (see Builder pipeline) |
+| `remark-validate-links` | Internal anchor/file link validation |
+| `lychee` | External URL validation |
 | `node:test` | Test runner |
 
 **Two separate YAML contexts, by design, not overlap:** `js-yaml` parses standalone YAML files (manifest, templates, schemas) as pure data. `remark-frontmatter` extracts frontmatter from *within* Markdown documents, inside the same unified/remark AST pass that does everything else — not a separate, disconnected parsing step. `gray-matter` would duplicate `remark-frontmatter`'s job outside that pipeline, which is exactly the kind of redundant parser this project's design avoids — hence it's not used.
@@ -300,7 +284,7 @@ This should be one of the first real files in the repo, not something deferred t
 - [ ] Finalize the template TypeScript interface shape, now that it's the one native format both YAML and direct TS authoring express
 - [ ] Full content for each `templates/documents/` entry (readme, api, changelog, credits, onboarding, scope) — list is set, actual template definitions are not yet written
 - [ ] `templates/schemas/manifest.schema.yml`'s own definition — what exactly the engine checks when validating a manifest against itself
-- [ ] **Exact `builder.output.md` format spec for machine parsing** — the sample shown is illustrative, not a defined grammar. Now genuinely needed for the `CHANGED-ON-MAIN:` forwarding to work reliably, not just a nice-to-have.
+- [ ] **Exact `builder.output.md` format spec for machine parsing** — the sample shown is illustrative, not a defined grammar. If a future tool (e.g. the pusher) wants to parse it programmatically rather than just read the exit code, the actual structure (heading levels, marker placement, summary line format) needs to be nailed down.
 - [ ] `action.yml`'s actual declared inputs/outputs — implementation detail once the Action is actually built, not a scope-level question given the manifest's fixed root location already constrains this
 - [ ] `MIGRATION.md`'s internal structure (one file with per-version sections vs. a table of contents linking to separate files) — an authoring choice to make when the first real migration guide gets written
 
