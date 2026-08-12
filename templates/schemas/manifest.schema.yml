@@ -1,0 +1,5 @@
+# What the engine validates a consuming repo's manifest.yml against.
+# Schema validation only — known manifest_version, entries is a
+# record of string-to-string. See SCOPE.md → Manifest validation.
+#
+# <placeholder>
