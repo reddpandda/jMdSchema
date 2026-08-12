@@ -148,7 +148,7 @@ jMdSchema/ (this repo — general, authoritative, no project-specific content, n
 
 ## Builder pipeline
 
-The builder writes its output to `bundles/`. A separate, manually-triggered **pusher** action moves reviewed content from `bundles/` to `main` — this human-in-the-loop step is why structural failures are soft failures: mangled output is staged for review, never published automatically. (See Post-build behavior below for exactly what the Action does and doesn't do with branches.)
+The builder writes its output to `bundles/`. A separate, manually-triggered **pusher** (working name: jShip, a separate repo) moves reviewed content from `bundles/` to `main` — this human-in-the-loop step is why structural failures are soft failures: mangled output is staged for review, never published automatically. (See Post-build behavior below for exactly what the Action does and doesn't do with branches.)
 
 Per source document, resolution and validation run as sequential plugins within one unified pipeline invocation — not two separate passes over the document — in this order:
 
@@ -169,6 +169,15 @@ Per source document, resolution and validation run as sequential plugins within 
 ### External link validation (lychee) — deliberately not part of this pipeline
 
 `lychee` is a standalone compiled tool, not a JS/remark plugin — it cannot run inside the same AST pipeline as everything else, unlike `remark-validate-links`. Rather than shell out to it from within jMdSchema's own Action (real added complexity, and a second failure surface for something [lychee's own official Action](https://github.com/lycheeverse/lychee-action) already does well), external link checking is **not invoked by jMdSchema's Action at all**. It's documented here as a recommended, separate step for a consuming repo's own workflow to add alongside jMdSchema's Action, with its own independent pass/fail reporting via `lychee-action`'s own GitHub annotations. jMdSchema's `builder.output.md` and exit code don't account for lychee's results — it's a genuinely separate check, not a gap in this one.
+
+### Optional: forwarding jShip's provenance warnings — checked-if-present only
+
+jShip (the pusher) runs a provenance check on every push — confirming a live file on `main` hasn't been edited outside jShip's own process since its last legitimate push. When that check finds a mismatch, jShip doesn't block the push (see jShip's own scope doc for why) — it pushes through anyway and logs a `CHANGED-ON-MAIN:` line in its own `pusher.output.md`, which it writes back to the docs branch specifically so the builder can find it.
+
+- On each run, the builder checks whether `pusher.output.md` exists on the docs branch.
+- **If it doesn't exist: skip entirely, no error.** This must never be a requirement — most builder runs will have nothing to check.
+- **If it exists**, parse it for `CHANGED-ON-MAIN:` lines. For each one found, surface it as a new `SOFT FAIL` in `builder.output.md` for that document, so the warning flows into the same human-review checkpoint the builder already uses rather than getting lost in a separate report nobody reliably checks.
+- **Dependency direction is one-way-required, one-way-optional, not circular**: jShip requires a clean `builder.output.md` to run at all (its own step 0). The builder's check of jShip's output is conditional-only, never required — a first-ever build with nothing pushed yet works exactly the same as any other.
 
 ## `builder.output.md`
 
@@ -228,6 +237,7 @@ Per source document, resolution and validation run as sequential plugins within 
 - **Manifest schema and existence validation, and indefinite multi-version support** — not semantic staleness, which stays manual/Claude-assisted
 - **Universal header/footer partials**
 - **The builder pipeline and `builder.output.md`**
+- **Optional forwarding of jShip's `pusher.output.md` provenance warnings into `builder.output.md`** — checked-if-present only, never a requirement
 - **Distribution as a GitHub Action**, including defined post-build behavior and exit-code semantics
 - **CREDITS.md**, maintained as a real, current attribution record
 - **MIGRATION.md**, one guide per `manifest_version` bump, for consumers who opt in to new features
@@ -245,7 +255,8 @@ Per source document, resolution and validation run as sequential plugins within 
 - **Dropping support for older `manifest_version` values** — every version stays supported indefinitely; a new version is a feature addition, never a deprecation
 - **Auto-commit/auto-push from the Action** — the Action only writes to the runner's filesystem; committing and pushing are the consuming repo's own workflow steps
 - **Rendering/output tooling** (HTML, math, diagrams)
-- **The pusher** (bundles/ → main branch) — a separate, simpler mechanism, not designed here
+- **The pusher** (bundles/ → main branch) — a separate, simpler mechanism, not designed here (see jShip's own scope document)
+- **Requiring `pusher.output.md` to exist** — the builder's check of it is always optional, never a hard dependency
 - **Project-specific content of any kind** — no consuming repo's actual `manifest.yml`, `content/`, or `partials/` lives in this repo
 
 ## Kept in spirit (idea only, not code)
@@ -289,7 +300,7 @@ This should be one of the first real files in the repo, not something deferred t
 - [ ] Finalize the template TypeScript interface shape, now that it's the one native format both YAML and direct TS authoring express
 - [ ] Full content for each `templates/documents/` entry (readme, api, changelog, credits, onboarding, scope) — list is set, actual template definitions are not yet written
 - [ ] `templates/schemas/manifest.schema.yml`'s own definition — what exactly the engine checks when validating a manifest against itself
-- [ ] **Exact `builder.output.md` format spec for machine parsing** — the sample shown is illustrative, not a defined grammar. If a future tool (e.g. the pusher) wants to parse it programmatically rather than just read the exit code, the actual structure (heading levels, marker placement, summary line format) needs to be nailed down.
+- [ ] **Exact `builder.output.md` format spec for machine parsing** — the sample shown is illustrative, not a defined grammar. Now genuinely needed for the `CHANGED-ON-MAIN:` forwarding to work reliably, not just a nice-to-have.
 - [ ] `action.yml`'s actual declared inputs/outputs — implementation detail once the Action is actually built, not a scope-level question given the manifest's fixed root location already constrains this
 - [ ] `MIGRATION.md`'s internal structure (one file with per-version sections vs. a table of contents linking to separate files) — an authoring choice to make when the first real migration guide gets written
 
